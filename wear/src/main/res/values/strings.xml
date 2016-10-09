@@ -4,4 +4,10 @@
     <string name="hello_square">Hello Square World!</string>
     <string name="wear_weather_path">/weather</string>
     <string name="wear_hi_key">high_temp_key</string>
+    <string name="wear_low_key">low_temp_key</string>
+    <string name="wear_id_key">id_key</string>
+    <string name="default_high_temp_value">0°C</string>
+    <string name="default_low_temp_value">0°C</string>
+    <string name="default_weather_id">800</string>
+    <string name="scale_size">60</string>
 </resources>

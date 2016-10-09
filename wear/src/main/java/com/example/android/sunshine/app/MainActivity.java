@@ -5,6 +5,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.res.Resources;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
@@ -18,7 +20,6 @@ import android.support.wearable.watchface.WatchFaceStyle;
 import android.util.Log;
 import android.view.SurfaceHolder;
 import android.view.WindowInsets;
-import android.widget.TextView;
 
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.api.GoogleApiClient;
@@ -41,8 +42,7 @@ public class MainActivity extends CanvasWatchFaceService {
 
     private static final String LOG_TAG = MainActivity.class.getSimpleName();
 
-    private static final Typeface NORMAL_TYPEFACE =
-            Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL);
+    private static final Typeface NORMAL_TYPEFACE = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL);
 
     private static final long INTERACTIVE_UPDATE_RATE_MS = TimeUnit.SECONDS.toMillis(1);
 
@@ -66,7 +66,7 @@ public class MainActivity extends CanvasWatchFaceService {
             if (engine != null) {
                 switch (msg.what) {
                     case MSG_UPDATE_TIME:
-                        engine.handleUpdateTimeMessage();
+                        engine.updateTimeMessage();
                         break;
                 }
             }
@@ -79,13 +79,13 @@ public class MainActivity extends CanvasWatchFaceService {
             GoogleApiClient.OnConnectionFailedListener {
 
         final Handler mUpdateTimeHandler = new EngineHandler(this);
-        private String mHighTemp = "0°C";
-        private String mLowTemp = " 0°C";
+        private String mHighTemp = getString(R.string.default_high_temp_value);
+        private String mLowTemp = getString(R.string.default_low_temp_value);
+        private int mWeatherId = Integer.valueOf(getString(R.string.default_weather_id));
 
         Paint mBackgroundPaint;
-        Paint mTextPaint, mSecondaryTextPaint;
+        Paint mTitlePaint, mTextPaint, mSecondaryTextPaint, mTextPaintLight;
         boolean mRegisteredTimeZoneReceiver = false;
-        private TextView mTextView;
         boolean mAmbient;
         private GoogleApiClient mGoogleApiClient;
         Calendar mCalendar;
@@ -104,10 +104,12 @@ public class MainActivity extends CanvasWatchFaceService {
 
         boolean mLowBitAmbient;
 
+        float mXStart;
+        float mYStart;
+
         @Override
         public void onCreate(SurfaceHolder holder) {
             super.onCreate(holder);
-            Log.d(LOG_TAG, "in wearables onCreate");
             mGoogleApiClient = new GoogleApiClient.Builder(MainActivity.this)
                     .addApi(Wearable.API)
                     .addConnectionCallbacks(this)
@@ -123,15 +125,22 @@ public class MainActivity extends CanvasWatchFaceService {
                     .build());
 
             Resources resources = MainActivity.this.getResources();
+            mYStart = resources.getDimension(R.dimen.y_axis_offset);
 
             mBackgroundPaint = new Paint();
             mBackgroundPaint.setColor(resources.getColor(R.color.primary));
 
-            mTextPaint = new Paint();
-            mTextPaint = createTextPaint(resources.getColor(R.color.primary_text));
+            mTitlePaint = new Paint();
+            mTitlePaint = createTextPaint(resources.getColor(R.color.primary_text));
 
             mSecondaryTextPaint = new Paint();
             mSecondaryTextPaint = createTextPaint(resources.getColor(R.color.secondary_text));
+
+            mTextPaint = new Paint();
+            mTextPaint = createTextPaint(resources.getColor(R.color.primary_text));
+
+            mTextPaintLight = new Paint();
+            mTextPaintLight = createTextPaint(resources.getColor(R.color.secondary_text));
 
             mCalendar = Calendar.getInstance();
 
@@ -159,19 +168,15 @@ public class MainActivity extends CanvasWatchFaceService {
             if (visible) {
                 registerReceiver();
 
-                // Update time zone in case it changed while we weren't visible.
                 mCalendar.setTimeZone(TimeZone.getDefault());
                 invalidate();
             } else {
                 unregisterReceiver();
                 if (mGoogleApiClient != null && mGoogleApiClient.isConnected()) {
-                    //Wearable.DataApi.removeListener(mGoogleApiClient, this);
                     mGoogleApiClient.disconnect();
                 }
             }
 
-            // Whether the timer should be running depends on whether we're visible (as well as
-            // whether we're in ambient mode), so we may need to start or stop the timer.
             updateTimer();
         }
 
@@ -195,9 +200,20 @@ public class MainActivity extends CanvasWatchFaceService {
         @Override
         public void onApplyWindowInsets(WindowInsets insets) {
             super.onApplyWindowInsets(insets);
+
+            Resources resources = MainActivity.this.getResources();
+            boolean isRound = insets.isRound();
+            mXStart = resources.getDimension(isRound ? R.dimen.x_axis_offset_round : R.dimen.x_axis_offset);
+            float textSize = resources.getDimension(isRound ? R.dimen.text_size_round : R.dimen.text_size);
+            float dateSize = resources.getDimension(isRound ? R.dimen.date_size_round : R.dimen.date_size);
+
+            mTitlePaint.setTextSize(textSize);
+            mTextPaint.setTextSize(dateSize);
+            mTextPaintLight.setTextSize(dateSize);
+            mSecondaryTextPaint.setTextSize(dateSize);
         }
 
-            @Override
+        @Override
         public void onPropertiesChanged(Bundle properties) {
             super.onPropertiesChanged(properties);
             mLowBitAmbient = properties.getBoolean(PROPERTY_LOW_BIT_AMBIENT, false);
@@ -215,7 +231,7 @@ public class MainActivity extends CanvasWatchFaceService {
             if (mAmbient != inAmbientMode) {
                 mAmbient = inAmbientMode;
                 if (mLowBitAmbient) {
-                    mTextPaint.setAntiAlias(!inAmbientMode);
+                    mTitlePaint.setAntiAlias(!inAmbientMode);
                 }
                 invalidate();
             }
@@ -225,84 +241,92 @@ public class MainActivity extends CanvasWatchFaceService {
 
         @Override
         public void onDraw(Canvas canvas, Rect bounds) {
+            // depending on whether we are in ambient mode, render the output canvas accordingly
             if (isInAmbientMode()) {
                 canvas.drawColor(Color.BLACK);
             } else {
                 canvas.drawRect(0, 0, bounds.width(), bounds.height(), mBackgroundPaint);
             }
 
+            // drawing in the clock with current time
             long now = System.currentTimeMillis();
             mCalendar.setTimeInMillis(now);
             String text = String.format("%d:%02d", mCalendar.get(Calendar.HOUR),mCalendar.get(Calendar.MINUTE));
 
-            canvas.drawText(text, 115.0f, 90.0f, mTextPaint);
+            canvas.drawText(text, bounds.centerX() - (mTitlePaint.measureText(text) / 2), mYStart, mTitlePaint);
+            float basicOffset = getResources().getDimension(R.dimen.line_height);
 
-            mDayOfWeekFormat = new SimpleDateFormat("EEE, dd MMMM");
+            // render the actual image of the weather id
+            Bitmap weatherIcon = BitmapFactory.decodeResource(getResources(), Utility.getIconResourceForWeatherCondition(mWeatherId));
+            int scale = Integer.valueOf(getString(R.string.scale_size));
+            Bitmap weather = Bitmap.createScaledBitmap(weatherIcon, scale, scale, true);
+
+            mDayOfWeekFormat = new SimpleDateFormat("EEE, MMM dd yyyy");
             String date = mDayOfWeekFormat.format(mCalendar.getTime());
 
-                canvas.drawText(date, 115.0f, 135.0f, mSecondaryTextPaint);
+            // display the date
+            canvas.drawText(date, bounds.centerX() - (mSecondaryTextPaint.measureText(date)/2), mYStart + basicOffset, mSecondaryTextPaint);
 
+            // in the last row, display the weather icon, and then the high and low temperatures
             if (!mAmbient) {
-                canvas.drawText(mHighTemp, 125.0f, 180f, mTextPaint);
+                canvas.drawBitmap(weather, bounds.centerX() - (mSecondaryTextPaint.measureText(date)/2), mYStart + 1.5f*basicOffset, mTitlePaint);
+                canvas.drawText(mHighTemp, bounds.centerX() - (mSecondaryTextPaint.measureText(mHighTemp)/2), mYStart + 2.5f*basicOffset, mTextPaint);
+                canvas.drawText(mLowTemp, bounds.centerX() + (mSecondaryTextPaint.measureText(date)/2)-(mSecondaryTextPaint.measureText(mLowTemp)), mYStart + 2.5f*basicOffset, mTextPaintLight);
             }
         }
 
         private void updateTimer() {
             mUpdateTimeHandler.removeMessages(MSG_UPDATE_TIME);
-            if (shouldTimerBeRunning()) {
+            if (isTimerRunning()) {
                 mUpdateTimeHandler.sendEmptyMessage(MSG_UPDATE_TIME);
             }
         }
 
-        private boolean shouldTimerBeRunning() {
+        private boolean isTimerRunning() {
             return isVisible() && !isInAmbientMode();
         }
 
-        private void handleUpdateTimeMessage() {
+        private void updateTimeMessage() {
             invalidate();
-            if (shouldTimerBeRunning()) {
+            if (isTimerRunning()) {
                 long timeMs = System.currentTimeMillis();
-                long delayMs = INTERACTIVE_UPDATE_RATE_MS
-                        - (timeMs % INTERACTIVE_UPDATE_RATE_MS);
+                long delayMs = INTERACTIVE_UPDATE_RATE_MS - (timeMs % INTERACTIVE_UPDATE_RATE_MS);
                 mUpdateTimeHandler.sendEmptyMessageDelayed(MSG_UPDATE_TIME, delayMs);
             }
         }
 
         @Override
         public void onConnected(Bundle bundle) {
-            Log.v(LOG_TAG, "onconnected1 called");
             Wearable.DataApi.addListener(mGoogleApiClient, this);
-            Log.v(LOG_TAG, "finished adding listener");
         }
 
         @Override
         public void onDataChanged(DataEventBuffer dataEvents) {
-            Log.d(LOG_TAG, "inside onDataChanged ");
             for (DataEvent event : dataEvents) {
                 if (event.getType() == DataEvent.TYPE_CHANGED) {
-                    Log.d(LOG_TAG, "detected a change in a data event");
                     // DataItem changed
                     DataItem item = event.getDataItem();
                     if (item.getUri().getPath().compareTo(getString(R.string.wear_weather_path)) == 0) {
                         DataMap dataMap = DataMapItem.fromDataItem(item).getDataMap();
-                        Log.d(LOG_TAG, "now about to update the weather");
+                        // grab data from Data item
                         mHighTemp = dataMap.getString(getString(R.string.wear_hi_key));
-                        Log.d(LOG_TAG, "High: " + mHighTemp);
+                        mLowTemp = dataMap.getString(getString(R.string.wear_low_key));
+                        mWeatherId = dataMap.getInt(getString(R.string.wear_id_key));
+                        Log.d(LOG_TAG, "High: " + mHighTemp + " Low: " + mLowTemp + " ID: " + mWeatherId);
+                        invalidate();
                     }
-                } else if (event.getType() == DataEvent.TYPE_DELETED) {
-                    // DataItem deleted
                 }
             }
         }
 
         @Override
         public void onConnectionSuspended(int i) {
-            Log.d(LOG_TAG, "Google Api Client Connection SUSPENDED " + i);
+            Log.d(LOG_TAG, "Google API Client Connection Suspended. Reason: " + i);
         }
 
         @Override
         public void onConnectionFailed(ConnectionResult connectionResult) {
-            Log.d(LOG_TAG, "Google Api client Connection FAILED "+ connectionResult);
+            Log.d(LOG_TAG, "Google API client Connection failed: "+ connectionResult);
         }
     }
 }

@@ -230,4 +230,6 @@
     <!-- Wearable strings -->
     <string name="wear_weather_path">/weather</string>
     <string name="wear_hi_key">high_temp_key</string>
+    <string name="wear_low_key">low_temp_key</string>
+    <string name="wear_id_key">id_key</string>
 </resources>

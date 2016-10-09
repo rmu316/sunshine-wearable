@@ -69,9 +69,9 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter
             "com.example.android.sunshine.app.ACTION_DATA_UPDATED";
     // Interval at which to sync with the weather, in seconds.
     // 60 seconds (1 minute) * 180 = 3 hours
-    public static final int SYNC_INTERVAL = 60 * 3; //60 * 180;
+    public static final int SYNC_INTERVAL = 60 * 180;
     public static final int SYNC_FLEXTIME = SYNC_INTERVAL/3;
-    private static final long DAY_IN_MILLIS = 60 * 3; //1000 * 60 * 60 * 24;
+    private static final long DAY_IN_MILLIS = 1000 * 60 * 60 * 24;
     private static final int WEATHER_NOTIFICATION_ID = 3004;
 
 
@@ -116,6 +116,7 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter
         Log.d(LOG_TAG, "Starting sync");
         String locationQuery = Utility.getPreferredLocation(getContext());
 
+        // Connect to Wear API
         mGoogleApiClient.connect();
 
         // These two need to be declared outside the try/catch
@@ -508,31 +509,39 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter
 
     private void updateWearable() {
         Context context = getContext();
-        Log.d(LOG_TAG, "Just entered updateWearable");
+        // before updating wearable, check that the API client is even connected
         if (mGoogleApiClient.isConnected()) {
-            Log.d(LOG_TAG, "good, google api client is connected");
+            // if so, grab info about client
             String locationQuery = Utility.getPreferredLocation(context);
             Uri weatherUri = WeatherContract.WeatherEntry
                     .buildWeatherLocationWithDate(locationQuery, System.currentTimeMillis());
+            // use cursor to extract info from SQLite database regarding min and max temp, as well as weather id
             Cursor cursor = context.getContentResolver()
-                    .query(weatherUri,NOTIFY_WEATHER_PROJECTION,null,null,null);
+                    .query(weatherUri,NOTIFY_WEATHER_PROJECTION, null, null, null);
             if (cursor.moveToFirst()) {
+                // extracting info from database
+                int weatherId = cursor.getInt(INDEX_WEATHER_ID);
                 double high = cursor.getDouble(INDEX_MAX_TEMP);
+                double low = cursor.getDouble(INDEX_MIN_TEMP);
+                // putting that info into a data map
                 PutDataMapRequest putDataMapReq = PutDataMapRequest.create(WEAR_WEATHER_PATH).setUrgent();
-                putDataMapReq.getDataMap().putString(context.getString(R.string.wear_hi_key),
-                        /*ity.formatTemperature(context, high)*/String.valueOf(System.currentTimeMillis()));
+                putDataMapReq.getDataMap().putString(context.getString(R.string.wear_hi_key), String.valueOf(Utility.formatTemperature(context, high)));
+                putDataMapReq.getDataMap().putString(context.getString(R.string.wear_low_key), String.valueOf(Utility.formatTemperature(context, low)));
+                putDataMapReq.getDataMap().putInt(context.getString(R.string.wear_id_key), weatherId);
                 PutDataRequest putDataReq = putDataMapReq.asPutDataRequest();
-                PendingResult<DataApi.DataItemResult> pendingResult =
-                        Wearable.DataApi.putDataItem(mGoogleApiClient, putDataReq);
+                // now putting the data map into a data item
+                PendingResult<DataApi.DataItemResult> pendingResult = Wearable.DataApi.putDataItem(mGoogleApiClient, putDataReq);
+                // wait to see if data item is successfully sent
                 DataApi.DataItemResult result = pendingResult.await();
                 if(result.getStatus().isSuccess()) {
-                    Log.d(LOG_TAG, "updateWearable: Sent1 Hi Temp: " + /*Utility.formatTemperature(context, high)*/String.valueOf(System.currentTimeMillis()));
+                    Log.d(LOG_TAG, "updateWearable: Sent Hi Temp: " + Utility.formatTemperature(context, high));
+                    Log.d(LOG_TAG, "updateWearable: Sent Low Temp: " + Utility.formatTemperature(context, low));
+                    Log.d(LOG_TAG, "updateWearable: Sent Weather Id: " + weatherId);
                 } else {
-                    Log.d(LOG_TAG, "uh-oh, looks like we had a problem in setting the high temp: " + Utility.formatTemperature(context, high));
+                    Log.d(LOG_TAG, "uh-oh, looks like we had a problem in sending the data");
                 }
 
                 cursor.close();
-                //mGoogleApiClient.disconnect();
             }
         }
     }
@@ -693,17 +702,17 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter
 
     @Override
     public void onConnected(@Nullable Bundle bundle) {
-        Log.d(LOG_TAG, "onConnected: connected to Wear API");
+        Log.d(LOG_TAG, "Connected to Wear API");
     }
 
     @Override
     public void onConnectionSuspended(int cause) {
-        Log.d(LOG_TAG, "onConnectionSuspended: Wear API Suspended " + cause);
+        Log.d(LOG_TAG, "Wear API Suspended because: " + cause);
     }
 
     @Override
     public void onConnectionFailed(@NonNull ConnectionResult connectionResult) {
-        Log.d(LOG_TAG, "onConnectionFailed: Wear API connection failed." + connectionResult);
+        Log.d(LOG_TAG, "Wear API connection failed because: " + connectionResult);
 
     }
 }
